@@ -1,0 +1,23 @@
+# Секреты и конфигурация
+.env
+
+# База данных и сессия Telethon
+data/
+
+# Python кэш
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
