@@ -3,6 +3,7 @@ import logging
 import warnings
 from dotenv import load_dotenv
 from telegram import Update, BotCommand
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 warnings.filterwarnings("ignore", message=".*per_message=False.*")
@@ -31,6 +32,7 @@ from handlers.campaigns import (
 
 load_dotenv()
 os.makedirs("data", exist_ok=True)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -89,6 +91,14 @@ async def post_init(application: Application):
     print("✅ Планировщик запущен")
 
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if isinstance(context.error, BadRequest) and "Message is not modified" in str(context.error):
+        if update.callback_query:
+            await update.callback_query.answer()
+        return
+    logging.getLogger(__name__).error("Unhandled exception:", exc_info=context.error)
+
+
 def main():
     init_db()
 
@@ -130,6 +140,8 @@ def main():
     app.add_handler(CallbackQueryHandler(camp_resume, pattern=r"^camp_resume_\d+$"))
     app.add_handler(CallbackQueryHandler(camp_cancel_confirm, pattern=r"^camp_cancel_\d+$"))
     app.add_handler(CallbackQueryHandler(camp_cancel_yes, pattern=r"^camp_cancel_yes_\d+$"))
+
+    app.add_error_handler(error_handler)
 
     print("🤖 Бот запущен!")
     app.run_polling(drop_pending_updates=True)
