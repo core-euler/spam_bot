@@ -3,7 +3,7 @@ import logging
 import warnings
 from dotenv import load_dotenv
 from telegram import Update, BotCommand
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 warnings.filterwarnings("ignore", message=".*per_message=False.*")
@@ -93,8 +93,11 @@ async def post_init(application: Application):
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(context.error, BadRequest) and "Message is not modified" in str(context.error):
-        if update.callback_query:
+        if update and update.callback_query:
             await update.callback_query.answer()
+        return
+    if isinstance(context.error, (TimedOut, NetworkError)):
+        logging.getLogger(__name__).warning("Network issue: %s", context.error)
         return
     logging.getLogger(__name__).error("Unhandled exception:", exc_info=context.error)
 
@@ -102,7 +105,16 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_db()
 
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(15)
+        .pool_timeout(10)
+        .build()
+    )
 
     # ConversationHandlers — первыми
     app.add_handler(get_chats_conversation())
