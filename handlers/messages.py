@@ -1,3 +1,4 @@
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler,
@@ -106,18 +107,28 @@ async def msg_attach_media_prompt(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def msg_receive_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    os.makedirs("data/media", exist_ok=True)
     if update.message.photo:
-        context.user_data["new_msg"]["media_file_id"] = update.message.photo[-1].file_id
-        context.user_data["new_msg"]["media_type"] = "photo"
+        file = await update.message.photo[-1].get_file()
+        media_type = "photo"
     elif update.message.video:
-        context.user_data["new_msg"]["media_file_id"] = update.message.video.file_id
-        context.user_data["new_msg"]["media_type"] = "video"
+        file = await update.message.video.get_file()
+        media_type = "video"
     elif update.message.document:
-        context.user_data["new_msg"]["media_file_id"] = update.message.document.file_id
-        context.user_data["new_msg"]["media_type"] = "document"
+        file = await update.message.document.get_file()
+        media_type = "document"
     else:
         await update.message.reply_text("Пожалуйста, отправьте фото, видео или документ.")
         return MSG_MEDIA
+
+    ext = os.path.splitext(file.file_path or "")[1] or {
+        "photo": ".jpg", "video": ".mp4", "document": ""
+    }.get(media_type, "")
+    local_path = f"data/media/{file.file_unique_id}{ext}"
+    await file.download_to_drive(local_path)
+
+    context.user_data["new_msg"]["media_file_id"] = local_path
+    context.user_data["new_msg"]["media_type"] = media_type
     return await _save_msg_from_message(update, context)
 
 

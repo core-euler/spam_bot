@@ -1,3 +1,4 @@
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler,
@@ -8,6 +9,44 @@ from keyboards import chats_menu_keyboard, chat_actions_keyboard, back_keyboard,
 
 CHAT_NAME, CHAT_USERNAME, CHAT_DELAY, CHAT_NOTE = range(4)
 EDIT_VALUE = 5
+
+
+def parse_chat_target(value: str) -> tuple[str | None, str | None, str | None]:
+    """
+    Парсит ввод пользователя и возвращает (username, chat_id, error).
+    Поддерживает: @username, числовой ID, ссылки t.me, мусорный ввод.
+    """
+    value = value.strip()
+
+    # Убираем мусор вида "Chat id: -100..."
+    clean = re.sub(r'^.*?(-?\d{6,}).*$', r'\1', value)
+    if clean != value and clean.lstrip("-").isdigit():
+        value = clean
+
+    # Ссылка https://t.me/username или https://t.me/c/channel_id
+    tme = re.match(r'https?://t\.me/c/(\d+)', value)
+    if tme:
+        return None, f"-100{tme.group(1)}", None
+
+    tme = re.match(r'https?://t\.me/([a-zA-Z_]\w{3,})', value)
+    if tme:
+        return f"@{tme.group(1)}", None, None
+
+    # Чистый числовой ID
+    if value.lstrip("-").isdigit():
+        return None, value, None
+
+    # @username
+    if re.match(r'^@?[a-zA-Z_]\w{3,}$', value):
+        username = value if value.startswith("@") else f"@{value}"
+        return username, None, None
+
+    return None, None, (
+        "Неверный формат. Введите:\n"
+        "• @username чата\n"
+        "• Числовой ID (например -1001234567890)\n"
+        "• Ссылку https://t.me/username"
+    )
 
 
 async def chats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,13 +128,12 @@ async def chat_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def chat_add_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    value = update.message.text.strip()
-    if value.lstrip("-").isdigit():
-        context.user_data["new_chat"]["chat_id"] = value
-        context.user_data["new_chat"]["username"] = None
-    else:
-        context.user_data["new_chat"]["username"] = value if value.startswith("@") else f"@{value}"
-        context.user_data["new_chat"]["chat_id"] = None
+    username, chat_id, error = parse_chat_target(update.message.text)
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return CHAT_USERNAME
+    context.user_data["new_chat"]["username"] = username
+    context.user_data["new_chat"]["chat_id"] = chat_id
     await update.message.reply_text("Задержка перед отправкой в секундах (0 = без задержки):")
     return CHAT_DELAY
 
@@ -192,12 +230,12 @@ async def chat_editfield_value(update: Update, context: ContextTypes.DEFAULT_TYP
     if field == "name":
         chat.name = value
     elif field == "username":
-        if value.lstrip("-").isdigit():
-            chat.chat_id = value
-            chat.username = None
-        else:
-            chat.username = value if value.startswith("@") else f"@{value}"
-            chat.chat_id = None
+        username, chat_id, error = parse_chat_target(value)
+        if error:
+            await update.message.reply_text(f"❌ {error}")
+            return EDIT_VALUE
+        chat.username = username
+        chat.chat_id = chat_id
     elif field == "delay":
         chat.delay_seconds = int(value) if value.isdigit() else 0
     elif field == "note":

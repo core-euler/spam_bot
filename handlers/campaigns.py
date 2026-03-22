@@ -29,7 +29,7 @@ async def camp_list_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     db = get_db()
     campaigns = db.query(Campaign).filter(
-        Campaign.status.in_(["active", "paused", "scheduled", "draft"])
+        Campaign.status.in_(["active", "paused", "scheduled"])
     ).all()
 
     if not campaigns:
@@ -40,7 +40,7 @@ async def camp_list_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    icons = {"active": "🟢", "paused": "⏸", "scheduled": "🕐", "draft": "📝"}
+    icons = {"active": "🟢", "paused": "⏸", "scheduled": "🕐"}
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton(
             f"{icons.get(c.status, '❓')} {c.name}",
@@ -50,7 +50,7 @@ async def camp_list_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [[InlineKeyboardButton("🔙 Назад", callback_data="menu_campaigns")]]
     )
     await query.edit_message_text(
-        "🗓 *Активные рассылки:*\n\n🟢 активна  ⏸ пауза  🕐 запланирована  📝 черновик",
+        "🗓 *Активные рассылки:*\n\n🟢 активна  ⏸ пауза  🕐 запланирована",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -130,7 +130,7 @@ async def camp_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_names = {
         "active": "🟢 Активна", "paused": "⏸ Пауза",
-        "scheduled": "🕐 Запланирована", "draft": "📝 Черновик",
+        "scheduled": "🕐 Запланирована",
         "done": "✅ Завершена", "cancelled": "⛔ Отменена"
     }
     repeat_names = {
@@ -296,7 +296,7 @@ async def _save_campaign(query, context: ContextTypes.DEFAULT_TYPE):
         ad_message_id=data["ad_message_id"],
         scheduled_at=data.get("scheduled_at"),
         repeat_type=data.get("repeat_type"),
-        status="draft"
+        status="active"
     )
     for cid in chat_ids:
         chat = db.query(Chat).get(cid)

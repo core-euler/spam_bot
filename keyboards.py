@@ -27,10 +27,14 @@ def messages_menu_keyboard():
 
 def campaigns_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Создать рассылку", callback_data="camp_add")],
-        [InlineKeyboardButton("📋 Активные рассылки", callback_data="camp_list_active")],
-        [InlineKeyboardButton("⚠️ Последние ошибки", callback_data="camp_errors")],
-        [InlineKeyboardButton("📜 История", callback_data="camp_list_done")],
+        [
+            InlineKeyboardButton("➕ Создать", callback_data="camp_add"),
+            InlineKeyboardButton("📋 Активные", callback_data="camp_list_active"),
+        ],
+        [
+            InlineKeyboardButton("⚠️ Ошибки", callback_data="camp_errors"),
+            InlineKeyboardButton("📜 История", callback_data="camp_list_done"),
+        ],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="menu_main")],
     ])
 

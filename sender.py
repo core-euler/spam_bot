@@ -2,6 +2,7 @@ import asyncio
 import os
 from datetime import datetime
 from telethon import TelegramClient
+from telethon.tl.types import PeerChannel, PeerChat
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserNotParticipantError
 from database import get_db, SendLog
 
@@ -21,6 +22,20 @@ async def get_telethon_client() -> TelegramClient:
     return telethon_client
 
 
+def resolve_target(chat):
+    """Получить правильный target для Telethon из объекта Chat."""
+    if chat.username:
+        return chat.username
+    raw_id = int(chat.chat_id)
+    # Каналы/супергруппы: -100XXXXXXXXXX
+    if raw_id < -1000000000000:
+        return PeerChannel(channel_id=int(str(raw_id)[4:]))
+    # Обычные группы: отрицательный ID
+    if raw_id < 0:
+        return PeerChat(chat_id=-raw_id)
+    return raw_id
+
+
 async def check_chat_access(chat) -> tuple[bool, str | None]:
     """
     Проверить, что Telethon-аккаунт имеет право писать в чат.
@@ -28,7 +43,7 @@ async def check_chat_access(chat) -> tuple[bool, str | None]:
     """
     try:
         client = await get_telethon_client()
-        target = chat.username or int(chat.chat_id)
+        target = resolve_target(chat)
         entity = await client.get_entity(target)
         # Попытка получить права — если чат недоступен, упадёт исключение
         await client.get_permissions(entity)
@@ -49,7 +64,7 @@ async def send_message_to_chat(chat, campaign) -> tuple[bool, str | None]:
     """
     db = get_db()
     msg = campaign.ad_message
-    target = chat.username or int(chat.chat_id)
+    target = resolve_target(chat)
 
     if chat.delay_seconds and chat.delay_seconds > 0:
         await asyncio.sleep(chat.delay_seconds)
@@ -110,7 +125,7 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
     """
     db = get_db()
     msg = campaign.ad_message
-    target = chat.username or int(chat.chat_id)
+    target = resolve_target(chat)
 
     try:
         client = await get_telethon_client()
@@ -150,7 +165,7 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
 async def cancel_scheduled_message(chat, message_id: int) -> bool:
     try:
         client = await get_telethon_client()
-        target = chat.username or int(chat.chat_id)
+        target = resolve_target(chat)
         await client.delete_messages(target, [message_id], revoke=True)
         return True
     except Exception as e:
