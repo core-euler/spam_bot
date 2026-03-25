@@ -1,11 +1,13 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from database import get_db, Campaign
 
 scheduler = AsyncIOScheduler(timezone="UTC")
+logger = logging.getLogger(__name__)
 
 
 def _campaign_id(campaign_or_id) -> int | None:
@@ -39,15 +41,21 @@ async def run_campaign(campaign_id: int):
             campaign.status = "cancelled"
             campaign.last_run_at = datetime.utcnow()
             db.commit()
-            print(f"⛔ Рассылка [{campaign_name}] отменена: нет рекламного сообщения")
+            logger.error("Campaign cancelled: no ad message bound campaign_id=%s name=%s", campaign_id, campaign_name)
             return
-        print(f"🚀 Запуск рассылки: {campaign_name}")
+        logger.info(
+            "Campaign run started: campaign_id=%s name=%s active_chats=%s repeat_type=%s",
+            campaign_id,
+            campaign_name,
+            len(chats),
+            repeat_type,
+        )
         success_count = 0
 
         for chat in chats:
             current_campaign = db.get(Campaign, campaign_id)
             if not current_campaign or current_campaign.status in {"paused", "cancelled"}:
-                print(f"⏹ Рассылка [{campaign_name}] остановлена во время выполнения")
+                logger.warning("Campaign stopped mid-run: campaign_id=%s name=%s", campaign_id, campaign_name)
                 return
 
             chat_name = chat.name
@@ -61,7 +69,12 @@ async def run_campaign(campaign_id: int):
                 )
                 db.add(log)
                 db.commit()
-                print(f"⛔ Нет доступа [{campaign_name}] → {chat_name}: {access_error}")
+                logger.warning(
+                    "Chat access denied during campaign run: campaign=%s chat=%s error=%s",
+                    campaign_name,
+                    chat_name,
+                    access_error,
+                )
                 continue
 
             sent, _ = await send_message_to_chat(chat, current_campaign)
@@ -70,7 +83,7 @@ async def run_campaign(campaign_id: int):
 
         campaign_to_update = db.get(Campaign, campaign_id)
         if not campaign_to_update:
-            print(f"ℹ️ Рассылка [{campaign_name}] уже удалена, статус не обновляю")
+            logger.info("Campaign deleted before final status update: campaign_id=%s name=%s", campaign_id, campaign_name)
             return
 
         campaign_to_update.last_run_at = datetime.utcnow()
@@ -78,7 +91,13 @@ async def run_campaign(campaign_id: int):
             campaign_to_update.status = "done"
         db.commit()
 
-        print(f"✅ Рассылка [{campaign_name}]: {success_count}/{len(chats)} успешно")
+        logger.info(
+            "Campaign run completed: campaign_id=%s name=%s success=%s total=%s",
+            campaign_id,
+            campaign_name,
+            success_count,
+            len(chats),
+        )
     finally:
         db.close()
 
@@ -111,7 +130,11 @@ async def schedule_campaign(campaign_or_id) -> bool:
                 ))
             campaign.status = "cancelled"
             db.commit()
-            print(f"⛔ Рассылка [{campaign.name}] отменена при планировании: нет рекламного сообщения")
+            logger.error(
+                "Campaign scheduling cancelled: no ad message bound campaign_id=%s name=%s",
+                campaign.id,
+                campaign.name,
+            )
             return False
 
         # --- Разовая рассылка ---
@@ -132,6 +155,12 @@ async def schedule_campaign(campaign_or_id) -> bool:
                         )
                         db.add(log)
                         db.commit()
+                        logger.warning(
+                            "Chat access denied during scheduling: campaign=%s chat=%s error=%s",
+                            campaign.name,
+                            chat.name,
+                            err,
+                        )
                         continue
 
                     msg_id = await schedule_message_telegram(chat, campaign, campaign.scheduled_at)
@@ -140,9 +169,17 @@ async def schedule_campaign(campaign_or_id) -> bool:
 
                 campaign.tg_scheduled_msg_ids = json.dumps(msg_ids)
                 campaign.status = "scheduled"
+                logger.info(
+                    "Campaign scheduled via Telegram: campaign_id=%s name=%s scheduled_chats=%s send_at=%s",
+                    campaign.id,
+                    campaign.name,
+                    len(msg_ids),
+                    campaign.scheduled_at,
+                )
             else:
                 campaign.status = "active"
                 db.commit()
+                logger.info("Campaign will run immediately: campaign_id=%s name=%s", campaign.id, campaign.name)
                 await run_campaign(campaign.id)
                 return True
 
@@ -170,6 +207,14 @@ async def schedule_campaign(campaign_or_id) -> bool:
 
         campaign.status = "active"
         db.commit()
+        logger.info(
+            "Recurring campaign scheduled: campaign_id=%s name=%s repeat_type=%s interval=%s next_run=%s",
+            campaign.id,
+            campaign.name,
+            campaign.repeat_type,
+            campaign.repeat_interval,
+            campaign.scheduled_at or now,
+        )
         return True
     finally:
         db.close()
@@ -191,6 +236,7 @@ async def pause_campaign(campaign_or_id) -> bool:
             scheduler.pause_job(job_id)
         campaign.status = "paused"
         db.commit()
+        logger.info("Campaign paused: campaign_id=%s name=%s", campaign.id, campaign.name)
         return True
     finally:
         db.close()
@@ -212,6 +258,7 @@ async def resume_campaign(campaign_or_id) -> bool:
             scheduler.resume_job(job_id)
         campaign.status = "active"
         db.commit()
+        logger.info("Campaign resumed: campaign_id=%s name=%s", campaign.id, campaign.name)
         return True
     finally:
         db.close()
@@ -232,6 +279,7 @@ async def cancel_campaign(campaign_or_id) -> bool:
         job_id = f"campaign_{campaign.id}"
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
+            logger.info("Campaign scheduler job removed: campaign_id=%s job_id=%s", campaign.id, job_id)
 
         if campaign.tg_scheduled_msg_ids:
             msg_ids = json.loads(campaign.tg_scheduled_msg_ids)
@@ -243,6 +291,7 @@ async def cancel_campaign(campaign_or_id) -> bool:
         campaign.status = "cancelled"
         campaign.tg_scheduled_msg_ids = None
         db.commit()
+        logger.info("Campaign cancelled: campaign_id=%s name=%s", campaign.id, campaign.name)
         return True
     finally:
         db.close()
@@ -275,6 +324,6 @@ def restore_active_campaigns():
                 id=f"campaign_{campaign.id}",
                 replace_existing=True,
             )
-            print(f"♻️ Восстановлена рассылка: {campaign.name}")
+            logger.info("Recurring campaign restored after restart: campaign_id=%s name=%s", campaign.id, campaign.name)
     finally:
         db.close()

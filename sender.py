@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import datetime
 from telethon import TelegramClient
@@ -12,13 +13,47 @@ PHONE_NUMBER = os.getenv("PHONE_NUMBER", "")
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
 
 telethon_client: TelegramClient = None
+logger = logging.getLogger(__name__)
+
+
+def _mask_phone(phone: str) -> str:
+    if len(phone) < 4:
+        return "***"
+    return f"{phone[:3]}***{phone[-2:]}"
 
 
 async def get_telethon_client() -> TelegramClient:
     global telethon_client
     if telethon_client is None or not telethon_client.is_connected():
+        session_base = os.path.abspath("data/session")
+        session_file = f"{session_base}.session"
+        logger.info(
+            "Initializing Telethon client: session=%s exists=%s phone=%s api_id=%s",
+            session_file,
+            os.path.exists(session_file),
+            _mask_phone(PHONE_NUMBER),
+            API_ID,
+        )
         telethon_client = TelegramClient("data/session", API_ID, API_HASH)
-        await telethon_client.start(phone=PHONE_NUMBER)
+        try:
+            await telethon_client.start(phone=PHONE_NUMBER)
+            logger.info(
+                "Telethon client started: authorized=%s",
+                await telethon_client.is_user_authorized(),
+            )
+        except EOFError as exc:
+            logger.exception(
+                "Telethon requested interactive input while starting. "
+                "The session is likely missing, expired, or requires re-login."
+            )
+            telethon_client = None
+            raise RuntimeError(
+                "Telethon session is missing or expired; interactive login is required on the server"
+            ) from exc
+        except Exception:
+            logger.exception("Failed to start Telethon client")
+            telethon_client = None
+            raise
     return telethon_client
 
 
@@ -44,15 +79,31 @@ async def check_chat_access(chat) -> tuple[bool, str | None]:
     try:
         client = await get_telethon_client()
         target = resolve_target(chat)
+        logger.info(
+            "Checking chat access: chat_id=%s name=%s username=%s target=%r",
+            chat.id,
+            chat.name,
+            chat.username,
+            target,
+        )
         entity = await client.get_entity(target)
         # Попытка получить права — если чат недоступен, упадёт исключение
         await client.get_permissions(entity)
         return True, None
     except ChatWriteForbiddenError:
+        logger.warning("Chat write forbidden: chat_id=%s name=%s", chat.id, chat.name)
         return False, "Нет права на отправку сообщений"
     except UserNotParticipantError:
+        logger.warning("User not participant: chat_id=%s name=%s", chat.id, chat.name)
         return False, "Аккаунт не является участником чата"
     except Exception as e:
+        logger.exception(
+            "Unexpected error while checking chat access: chat_id=%s name=%s username=%s chat_db_id=%s",
+            getattr(chat, "chat_id", None),
+            getattr(chat, "name", None),
+            getattr(chat, "username", None),
+            getattr(chat, "id", None),
+        )
         return False, str(e)
 
 
@@ -96,17 +147,30 @@ async def send_message_to_chat(chat, campaign) -> tuple[bool, str | None]:
                 log = SendLog(campaign_id=campaign_id, chat_id=chat_id, status="sent")
                 db.add(log)
                 db.commit()
-                print(f"✅ [{campaign_name}] → {chat_name}")
+                logger.info("Message sent: campaign=%s chat=%s", campaign_name, chat_name)
                 return True, None
 
             except FloodWaitError as e:
                 last_error = f"FloodWait {e.seconds}s (попытка {attempt}/{MAX_RETRIES})"
-                print(f"⏳ {last_error} — чат {chat_name}")
+                logger.warning(
+                    "FloodWait during send: campaign=%s chat=%s wait=%ss attempt=%s/%s",
+                    campaign_name,
+                    chat_name,
+                    e.seconds,
+                    attempt,
+                    MAX_RETRIES,
+                )
                 await asyncio.sleep(e.seconds)
 
             except Exception as e:
                 last_error = str(e)
-                print(f"❌ [{campaign_name}] → {chat_name}: {last_error} (попытка {attempt}/{MAX_RETRIES})")
+                logger.exception(
+                    "Send attempt failed: campaign=%s chat=%s attempt=%s/%s",
+                    campaign_name,
+                    chat_name,
+                    attempt,
+                    MAX_RETRIES,
+                )
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(3)
 
@@ -155,7 +219,13 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
                 schedule=send_at,
             )
 
-        print(f"🕐 Запланировано [{campaign_name}] → {chat_name} на {send_at}")
+        logger.info(
+            "Telegram scheduled message created: campaign=%s chat=%s send_at=%s message_id=%s",
+            campaign_name,
+            chat_name,
+            send_at,
+            result.id,
+        )
         return str(result.id)
 
     except Exception as e:
@@ -167,7 +237,12 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
         )
         db.add(log)
         db.commit()
-        print(f"❌ Ошибка планирования [{campaign_name}] → {chat_name}: {e}")
+        logger.exception(
+            "Failed to create Telegram scheduled message: campaign=%s chat=%s send_at=%s",
+            campaign_name,
+            chat_name,
+            send_at,
+        )
         return None
     finally:
         db.close()
@@ -178,7 +253,13 @@ async def cancel_scheduled_message(chat, message_id: int) -> bool:
         client = await get_telethon_client()
         target = resolve_target(chat)
         await client.delete_messages(target, [message_id], revoke=True)
+        logger.info("Scheduled message cancelled: chat=%s message_id=%s", chat.name, message_id)
         return True
-    except Exception as e:
-        print(f"❌ Ошибка отмены сообщения: {e}")
+    except Exception:
+        logger.exception(
+            "Failed to cancel scheduled message: chat_id=%s name=%s message_id=%s",
+            chat.id,
+            chat.name,
+            message_id,
+        )
         return False
