@@ -305,7 +305,7 @@ async def _save_campaign(query, context: ContextTypes.DEFAULT_TYPE):
     db.add(camp)
     db.commit()
 
-    asyncio.create_task(schedule_campaign(camp))
+    asyncio.create_task(schedule_campaign(camp.id))
 
     await query.edit_message_text(
         f"✅ Рассылка *{camp.name}* создана и запланирована!",
@@ -320,10 +320,15 @@ async def camp_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     db = get_db()
     camp = db.query(Campaign).get(int(query.data.split("_")[-1]))
-    await pause_campaign(camp)
+    if not camp:
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
+    if not await pause_campaign(camp.id):
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
     await query.edit_message_text(
         f"⏸ Рассылка *{camp.name}* приостановлена.",
-        reply_markup=campaign_actions_keyboard(camp.id, camp.status),
+        reply_markup=campaign_actions_keyboard(camp.id, "paused"),
         parse_mode="Markdown"
     )
 
@@ -334,10 +339,15 @@ async def camp_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     db = get_db()
     camp = db.query(Campaign).get(int(query.data.split("_")[-1]))
-    await resume_campaign(camp)
+    if not camp:
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
+    if not await resume_campaign(camp.id):
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
     await query.edit_message_text(
         f"▶️ Рассылка *{camp.name}* возобновлена.",
-        reply_markup=campaign_actions_keyboard(camp.id, camp.status),
+        reply_markup=campaign_actions_keyboard(camp.id, "active"),
         parse_mode="Markdown"
     )
 
@@ -348,6 +358,9 @@ async def camp_cancel_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     camp_id = int(query.data.split("_")[-1])
     db = get_db()
     camp = db.query(Campaign).get(camp_id)
+    if not camp:
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
     await query.edit_message_text(
         f"⛔ Отменить рассылку *{camp.name}*?\nОтложенные сообщения в Telegram тоже будут удалены.",
         reply_markup=confirm_keyboard(f"camp_cancel_yes_{camp_id}", f"camp_detail_{camp_id}"),
@@ -361,7 +374,12 @@ async def camp_cancel_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     db = get_db()
     camp = db.query(Campaign).get(int(query.data.split("_")[-1]))
-    await cancel_campaign(camp)
+    if not camp:
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
+    if not await cancel_campaign(camp.id):
+        await query.edit_message_text("Рассылка уже удалена.", reply_markup=back_keyboard("camp_list_active"))
+        return
     await query.edit_message_text("⛔ Рассылка отменена.", reply_markup=campaigns_menu_keyboard())
 
 

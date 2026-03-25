@@ -172,6 +172,9 @@ async def chat_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = int(query.data.split("_")[-1])
     db = get_db()
     chat = db.query(Chat).get(chat_id)
+    if not chat:
+        await query.edit_message_text("Чат уже удалён.", reply_markup=back_keyboard("chat_list"))
+        return
     await query.edit_message_text(
         f"🗑 Удалить чат *{chat.name}*? Это нельзя отменить.",
         reply_markup=confirm_keyboard(f"chat_delete_yes_{chat_id}", "chat_list"),
@@ -188,7 +191,9 @@ async def chat_delete_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat:
         db.delete(chat)
         db.commit()
-    await query.edit_message_text("✅ Чат удалён.", reply_markup=chats_menu_keyboard())
+        await query.edit_message_text("✅ Чат удалён.", reply_markup=chats_menu_keyboard())
+        return
+    await query.edit_message_text("Чат уже удалён.", reply_markup=back_keyboard("chat_list"))
 
 
 async def chat_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,6 +231,9 @@ async def chat_editfield_value(update: Update, context: ContextTypes.DEFAULT_TYP
     value = update.message.text.strip()
     db = get_db()
     chat = db.query(Chat).get(chat_id)
+    if not chat:
+        await update.message.reply_text("Чат уже удалён.", reply_markup=chats_menu_keyboard())
+        return ConversationHandler.END
 
     if field == "name":
         chat.name = value

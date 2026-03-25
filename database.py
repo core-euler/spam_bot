@@ -9,7 +9,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/bot.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
 # Связь many-to-many: рассылка ↔ чаты

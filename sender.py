@@ -65,57 +65,62 @@ async def send_message_to_chat(chat, campaign) -> tuple[bool, str | None]:
     db = get_db()
     msg = campaign.ad_message
     target = resolve_target(chat)
+    campaign_name = campaign.name
+    campaign_id = campaign.id
+    chat_name = chat.name
+    chat_id = chat.id
 
-    if chat.delay_seconds and chat.delay_seconds > 0:
-        await asyncio.sleep(chat.delay_seconds)
+    try:
+        if chat.delay_seconds and chat.delay_seconds > 0:
+            await asyncio.sleep(chat.delay_seconds)
 
-    last_error = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            client = await get_telethon_client()
+        last_error = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                client = await get_telethon_client()
 
-            if msg.media_file_id:
-                await client.send_file(
-                    target,
-                    file=msg.media_file_id,
-                    caption=msg.text,
-                    parse_mode=msg.parse_mode.lower(),
-                )
-            else:
-                await client.send_message(
-                    target,
-                    msg.text,
-                    parse_mode=msg.parse_mode.lower(),
-                )
+                if msg.media_file_id:
+                    await client.send_file(
+                        target,
+                        file=msg.media_file_id,
+                        caption=msg.text,
+                        parse_mode=msg.parse_mode.lower(),
+                    )
+                else:
+                    await client.send_message(
+                        target,
+                        msg.text,
+                        parse_mode=msg.parse_mode.lower(),
+                    )
 
-            # Успех — пишем в лог
-            log = SendLog(campaign_id=campaign.id, chat_id=chat.id, status="sent")
-            db.add(log)
-            db.commit()
-            print(f"✅ [{campaign.name}] → {chat.name}")
-            return True, None
+                log = SendLog(campaign_id=campaign_id, chat_id=chat_id, status="sent")
+                db.add(log)
+                db.commit()
+                print(f"✅ [{campaign_name}] → {chat_name}")
+                return True, None
 
-        except FloodWaitError as e:
-            last_error = f"FloodWait {e.seconds}s (попытка {attempt}/{MAX_RETRIES})"
-            print(f"⏳ {last_error} — чат {chat.name}")
-            await asyncio.sleep(e.seconds)
+            except FloodWaitError as e:
+                last_error = f"FloodWait {e.seconds}s (попытка {attempt}/{MAX_RETRIES})"
+                print(f"⏳ {last_error} — чат {chat_name}")
+                await asyncio.sleep(e.seconds)
 
-        except Exception as e:
-            last_error = str(e)
-            print(f"❌ [{campaign.name}] → {chat.name}: {last_error} (попытка {attempt}/{MAX_RETRIES})")
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(3)
+            except Exception as e:
+                last_error = str(e)
+                print(f"❌ [{campaign_name}] → {chat_name}: {last_error} (попытка {attempt}/{MAX_RETRIES})")
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(3)
 
-    # Все попытки исчерпаны — пишем failed в лог
-    log = SendLog(
-        campaign_id=campaign.id,
-        chat_id=chat.id,
-        status="failed",
-        error=last_error,
-    )
-    db.add(log)
-    db.commit()
-    return False, last_error
+        log = SendLog(
+            campaign_id=campaign_id,
+            chat_id=chat_id,
+            status="failed",
+            error=last_error,
+        )
+        db.add(log)
+        db.commit()
+        return False, last_error
+    finally:
+        db.close()
 
 
 async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | None:
@@ -126,6 +131,10 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
     db = get_db()
     msg = campaign.ad_message
     target = resolve_target(chat)
+    campaign_name = campaign.name
+    campaign_id = campaign.id
+    chat_name = chat.name
+    chat_id = chat.id
 
     try:
         client = await get_telethon_client()
@@ -146,20 +155,22 @@ async def schedule_message_telegram(chat, campaign, send_at: datetime) -> str | 
                 schedule=send_at,
             )
 
-        print(f"🕐 Запланировано [{campaign.name}] → {chat.name} на {send_at}")
+        print(f"🕐 Запланировано [{campaign_name}] → {chat_name} на {send_at}")
         return str(result.id)
 
     except Exception as e:
         log = SendLog(
-            campaign_id=campaign.id,
-            chat_id=chat.id,
+            campaign_id=campaign_id,
+            chat_id=chat_id,
             status="failed",
             error=f"Ошибка планирования: {e}",
         )
         db.add(log)
         db.commit()
-        print(f"❌ Ошибка планирования [{campaign.name}] → {chat.name}: {e}")
+        print(f"❌ Ошибка планирования [{campaign_name}] → {chat_name}: {e}")
         return None
+    finally:
+        db.close()
 
 
 async def cancel_scheduled_message(chat, message_id: int) -> bool:

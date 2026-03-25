@@ -172,6 +172,9 @@ async def msg_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg_id = int(query.data.split("_")[-1])
     db = get_db()
     msg = db.query(AdMessage).get(msg_id)
+    if not msg:
+        await query.edit_message_text("Сообщение уже удалено.", reply_markup=back_keyboard("msg_list"))
+        return
     await query.edit_message_text(
         f"🗑 Удалить сообщение *{msg.title}*?",
         reply_markup=confirm_keyboard(f"msg_delete_yes_{msg_id}", "msg_list"),
@@ -188,7 +191,9 @@ async def msg_delete_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg:
         db.delete(msg)
         db.commit()
-    await query.edit_message_text("✅ Сообщение удалено.", reply_markup=messages_menu_keyboard())
+        await query.edit_message_text("✅ Сообщение удалено.", reply_markup=messages_menu_keyboard())
+        return
+    await query.edit_message_text("Сообщение уже удалено.", reply_markup=back_keyboard("msg_list"))
 
 
 async def msg_edit_text_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -204,6 +209,9 @@ async def msg_edit_text_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg_id = context.user_data["edit_msg_id"]
     db = get_db()
     msg = db.query(AdMessage).get(msg_id)
+    if not msg:
+        await update.message.reply_text("Сообщение уже удалено.", reply_markup=messages_menu_keyboard())
+        return ConversationHandler.END
     msg.text = update.message.text
     db.commit()
     await update.message.reply_text("✅ Текст обновлён!", reply_markup=message_actions_keyboard(msg_id))
