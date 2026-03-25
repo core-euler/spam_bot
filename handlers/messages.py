@@ -4,7 +4,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler,
     MessageHandler, filters, CallbackQueryHandler
 )
-from database import get_db, AdMessage
+from database import get_db, AdMessage, Campaign
 from keyboards import messages_menu_keyboard, message_actions_keyboard, back_keyboard, confirm_keyboard
 
 MSG_TITLE, MSG_TEXT, MSG_MEDIA, MSG_EDIT_TEXT = range(10, 14)
@@ -175,6 +175,15 @@ async def msg_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not msg:
         await query.edit_message_text("Сообщение уже удалено.", reply_markup=back_keyboard("msg_list"))
         return
+    campaigns_count = db.query(Campaign).filter(Campaign.ad_message_id == msg_id).count()
+    if campaigns_count:
+        await query.edit_message_text(
+            f"⛔ Сообщение *{msg.title}* используется в {campaigns_count} рассылк(е/ах).\n\n"
+            "Сначала удалите или пересоздайте эти рассылки, иначе они останутся без текста.",
+            reply_markup=back_keyboard("msg_list"),
+            parse_mode="Markdown"
+        )
+        return
     await query.edit_message_text(
         f"🗑 Удалить сообщение *{msg.title}*?",
         reply_markup=confirm_keyboard(f"msg_delete_yes_{msg_id}", "msg_list"),
@@ -189,6 +198,13 @@ async def msg_delete_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
     msg = db.query(AdMessage).get(msg_id)
     if msg:
+        campaigns_count = db.query(Campaign).filter(Campaign.ad_message_id == msg_id).count()
+        if campaigns_count:
+            await query.edit_message_text(
+                "Сообщение нельзя удалить: оно всё ещё используется в рассылках.",
+                reply_markup=back_keyboard("msg_list")
+            )
+            return
         db.delete(msg)
         db.commit()
         await query.edit_message_text("✅ Сообщение удалено.", reply_markup=messages_menu_keyboard())

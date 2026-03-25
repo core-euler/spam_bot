@@ -4,7 +4,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler,
     MessageHandler, filters, CallbackQueryHandler
 )
-from database import get_db, Chat
+from database import get_db, Chat, SendLog, campaign_chats
 from keyboards import chats_menu_keyboard, chat_actions_keyboard, back_keyboard, confirm_keyboard
 
 CHAT_NAME, CHAT_USERNAME, CHAT_DELAY, CHAT_NOTE = range(4)
@@ -175,6 +175,18 @@ async def chat_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not chat:
         await query.edit_message_text("Чат уже удалён.", reply_markup=back_keyboard("chat_list"))
         return
+    logs_count = db.query(SendLog).filter(SendLog.chat_id == chat_id).count()
+    campaign_links = db.execute(
+        campaign_chats.select().where(campaign_chats.c.chat_id == chat_id)
+    ).fetchall()
+    if logs_count or campaign_links:
+        await query.edit_message_text(
+            f"🗑 Чат *{chat.name}* уже использовался в рассылках или логах.\n\n"
+            "Чтобы не ломать историю, он будет *отключён*, а не удалён физически.",
+            reply_markup=confirm_keyboard(f"chat_delete_yes_{chat_id}", f"chat_view_{chat_id}"),
+            parse_mode="Markdown"
+        )
+        return
     await query.edit_message_text(
         f"🗑 Удалить чат *{chat.name}*? Это нельзя отменить.",
         reply_markup=confirm_keyboard(f"chat_delete_yes_{chat_id}", "chat_list"),
@@ -189,6 +201,19 @@ async def chat_delete_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
     chat = db.query(Chat).get(chat_id)
     if chat:
+        logs_count = db.query(SendLog).filter(SendLog.chat_id == chat_id).count()
+        campaign_links = db.execute(
+            campaign_chats.select().where(campaign_chats.c.chat_id == chat_id)
+        ).fetchall()
+        if logs_count or campaign_links:
+            chat.is_active = False
+            db.commit()
+            await query.edit_message_text(
+                "✅ Чат отключён. История отправок и связи с прошлыми рассылками сохранены.",
+                reply_markup=chats_menu_keyboard()
+            )
+            return
+
         db.delete(chat)
         db.commit()
         await query.edit_message_text("✅ Чат удалён.", reply_markup=chats_menu_keyboard())

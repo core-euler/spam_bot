@@ -28,6 +28,19 @@ async def run_campaign(campaign_id: int):
         campaign_name = campaign.name
         repeat_type = campaign.repeat_type
         chats = [chat for chat in campaign.chats if chat.is_active]
+        if not campaign.ad_message:
+            for chat in chats:
+                db.add(SendLog(
+                    campaign_id=campaign_id,
+                    chat_id=chat.id,
+                    status="failed",
+                    error="У рассылки не привязано рекламное сообщение",
+                ))
+            campaign.status = "cancelled"
+            campaign.last_run_at = datetime.utcnow()
+            db.commit()
+            print(f"⛔ Рассылка [{campaign_name}] отменена: нет рекламного сообщения")
+            return
         print(f"🚀 Запуск рассылки: {campaign_name}")
         success_count = 0
 
@@ -86,6 +99,19 @@ async def schedule_campaign(campaign_or_id) -> bool:
     try:
         campaign = db.get(Campaign, campaign_id)
         if not campaign:
+            return False
+        if not campaign.ad_message:
+            chats = [chat for chat in campaign.chats if chat.is_active]
+            for chat in chats:
+                db.add(SendLog(
+                    campaign_id=campaign.id,
+                    chat_id=chat.id,
+                    status="failed",
+                    error="Невозможно запланировать: у рассылки нет рекламного сообщения",
+                ))
+            campaign.status = "cancelled"
+            db.commit()
+            print(f"⛔ Рассылка [{campaign.name}] отменена при планировании: нет рекламного сообщения")
             return False
 
         # --- Разовая рассылка ---
